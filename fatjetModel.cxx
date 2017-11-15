@@ -20,6 +20,9 @@
 #include <TLatex.h>
 #include <TCanvas.h>
 #include <TRandom3.h>
+#include <TGraph.h>
+#include <TGraphErrors.h>
+#include <TGraphAsymmErrors.h>
 #include <iostream>
 #include <sstream>
 
@@ -205,6 +208,29 @@ TH1D* fatjetModel::get_cdf(std::string channel_name, std::string process_name) {
 }
 
 // ---------------------------------------------------------
+std::vector<std::string> fatjetModel::get_process_names(std::string category) {
+	std::vector<std::string> result;
+	if (category == "signal") return processes_sig;
+	else if (category == "all") return processes;
+	return result;
+}
+
+// ---------------------------------------------------------
+void fatjetModel::let_signal_float(std::string signal_process) {
+	// Fix all signals to 0. If signal specified, it's allowed to float.
+	
+	for (unsigned isig = 0; isig < processes_sig.size(); ++isig) {
+		std::string par_name = "norm" + processes_sig[isig];
+		std::cout << par_name << std::endl;
+		if (signal_process != processes_sig[isig]) this->GetParameter(par_name).Fix(0.0);
+		else {
+			this->GetParameter(par_name).Unfix();
+			this->GetParameter(par_name).SetPriorConstant();
+		}
+	}
+}
+
+// ---------------------------------------------------------
 void fatjetModel::differentiate_cdf(const TH1D* cdf, TH1D* out, double amplitude, double shift, double stretch) {
 //	assert(stretch > 0.0);
 	
@@ -243,6 +269,7 @@ TH1D* fatjetModel::morph_template(std::string channel_name, std::string process_
 	return h_morphed;
 }
 
+// ---------------------------------------------------------
 double fatjetModel::get_parameter_value(const std::vector<double>& parameters, std::string name) {
 	for (unsigned i = 0; i < parameters.size(); ++i) {
 //		double par_value = parameters[i];
@@ -353,7 +380,7 @@ double fatjetModel::LogLikelihood(const std::vector<double>& parameters)
 //		delete cdf_ttbar;
 //		delete cdf_qcd;
 		delete h_ttbar_morphed;
-		delete h_sig_morphed;
+		if (nsig > 0) delete h_sig_morphed;
 		delete h_qcd_morphed;
 		
 ////		std::cout << "normQCD = " << normQCD << std::endl;
@@ -392,10 +419,15 @@ TH1D* fatjetModel::make_toy(std::string channel) {
 
 // ---------------------------------------------------------
 std::vector<double> fatjetModel::get_limit(bool observed, std::string signal_process, int n) {
+	BCLog::OutSummary("");
+	std::string kind = "observed";
+	if (!observed) kind = "expected";
+	BCLog::OutSummary("Calculating " + kind  + " limits for " + signal_process + ".");
+	BCLog::OutSummary(Form(" * Will run %i times.", n));
 	std::vector<double> results;
 	std::vector<double> output;
 	
-	// Set signal strength of particular signal to 1:
+	// Set signal strength of particular signal to float:
 	for (unsigned isig = 0; isig < processes_sig.size(); ++isig) {
 		if (signal_process != processes_sig[isig]) this->GetParameter("norm" + processes_sig[isig]).Fix(0.0);
 		else this->GetParameter("norm" + processes_sig[isig]).Unfix();
@@ -403,6 +435,7 @@ std::vector<double> fatjetModel::get_limit(bool observed, std::string signal_pro
 	
 	// Do n iterations:
 	for (int i = 0; i < n; ++i) {
+		BCLog::OutSummary(Form("Marginalization number %i/%i", i + 1, n));
 		// Set data or toy:
 		if (observed) {
 			for (unsigned i = 0; i < channels.size(); ++i) {
@@ -466,6 +499,84 @@ std::vector<double> fatjetModel::get_observed_limit(std::string signal_process, 
 // ---------------------------------------------------------
 std::vector<double> fatjetModel::get_expected_limit(std::string signal_process, int n) {
 	return get_limit(false, signal_process, n);
+}
+
+// ---------------------------------------------------------
+void fatjetModel::make_limit_plot(std::vector<std::vector<double>> expected_limits, std::vector<std::vector<double>> observed_limits, std::string prefix) {
+	// Make output file:
+	std::string out_name = "limit_plots";
+	if (prefix != "") out_name += "_" + prefix;
+	out_name += ".root";
+	TFile* tf_out = TFile::Open(TString(out_name), "recreate");
+	
+	// Construct graphs:
+	TGraph* exp_central = new TGraph();
+	exp_central->SetName("exp_central");
+	TGraphAsymmErrors* exp_1sigma = new TGraphAsymmErrors();
+	exp_1sigma->SetName("exp_1sigma");
+	TGraphAsymmErrors* exp_2sigma = new TGraphAsymmErrors();
+	exp_2sigma->SetName("exp_2sigma");
+	TGraph* obs_central = new TGraph();
+	obs_central->SetName("obs_central");
+	TGraph* cross_central = new TGraph();
+	cross_central->SetName("cross_central");
+	TGraphErrors* cross_1sigma = new TGraphErrors();
+	cross_1sigma->SetName("cross_1sigma");
+	
+	// Fill graphs:
+	/// Fill expected:
+	for (unsigned i = 0; i < expected_limits.size(); ++i) {
+		double m = mss_double[i];
+		unsigned i_cross = int((m - 100)/25);
+		double cross_section = cross_sections[i_cross];
+		double central = expected_limits[i][0]*cross_section;
+		double sigma_1down = expected_limits[i][1]*cross_section;
+		double sigma_1up = expected_limits[i][2]*cross_section;
+		double sigma_2down = expected_limits[i][3]*cross_section;
+		double sigma_2up = expected_limits[i][4]*cross_section;
+		
+		exp_central->SetPoint(i, m, central);
+		exp_1sigma->SetPoint(i, m, central);
+		exp_2sigma->SetPoint(i, m, central);
+		exp_1sigma->SetPointError(i, 0.0, 0.0, central - sigma_1down, sigma_1up - central);
+		exp_2sigma->SetPointError(i, 0.0, 0.0, central - sigma_2down, sigma_2up - central);
+	}
+	/// Fill observed:
+	for (unsigned i = 0; i < observed_limits.size(); ++i) {
+		double m = mss_double[i];
+		unsigned i_cross = int((m - 100.0)/25.0);
+		double cross_section = cross_sections[i_cross];
+		double central = observed_limits[i][0]*cross_section;
+		
+		obs_central->SetPoint(i, m, central);
+	}
+	/// Fill cross:
+	for (unsigned i = 0; i < cross_sections.size(); ++i) {
+		double m = 100.0 + i*25;
+		double cross_section = cross_sections[i];
+		double cross_section_error = cross_section_errors[i];
+		
+		cross_central->SetPoint(i, m, cross_section);
+		cross_1sigma->SetPoint(i, m, cross_section);
+		cross_1sigma->SetPointError(i, 0.0, cross_section*cross_section_error);
+	}
+	
+	// Write graphs:
+	tf_out->WriteTObject(exp_central);
+	tf_out->WriteTObject(exp_1sigma);
+	tf_out->WriteTObject(exp_2sigma);
+	tf_out->WriteTObject(obs_central);
+	tf_out->WriteTObject(cross_central);
+	tf_out->WriteTObject(cross_1sigma);
+	tf_out->Close();
+	
+	// Clean up:
+	delete exp_central;
+	delete exp_1sigma;
+	delete exp_2sigma;
+	delete obs_central;
+	delete cross_central;
+	delete cross_1sigma;
 }
 
 
@@ -598,6 +709,7 @@ void fatjetModel::PrintStack(int channelindex, const std::vector<double>& parame
 		std::string process_name = "none";
 		if (temp_name == "normTTbar") process_name = "TTbar";
 		else if (temp_name == "normQCDSR" || temp_name == "normQCDSB") process_name = "QCD";
+		else continue;
 		
         // get histogram
 //        TH1D* temphist = get_histogram(channel_name, process_name);
@@ -707,20 +819,25 @@ void fatjetModel::PrintStack(int channelindex, const std::vector<double>& parame
     gPad->RedrawAxis();
     
     // Write parameters:
+	double normTTbar = get_parameter_value(parameters, "normTTbar");
+	double shiftTTbar = get_parameter_value(parameters, "shiftTTbar");
+	double stretchTTbar = get_parameter_value(parameters, "stretchTTbar");
+	double shiftQCD = get_parameter_value(parameters, "shiftQCD");
+	double stretchQCD = get_parameter_value(parameters, "stretchQCD");
 	std::ostringstream oss1;
-	oss1 << "t#bar{t} norm = " << std::fixed << std::setprecision(2) << parameters[1];
+	oss1 << "t#bar{t} norm = " << std::fixed << std::setprecision(2) << normTTbar;
 	std::ostringstream oss2;
-	oss2 << "t#bar{t} shift = " << std::fixed << std::setprecision(1) << parameters[3] << " GeV";
+	oss2 << "t#bar{t} shift = " << std::fixed << std::setprecision(1) << shiftTTbar << " GeV";
 	std::ostringstream oss3;
 	oss3 << "t#bar{t} stretch = " << std::fixed << std::setprecision(1);
-	if (parameters[5] > 1) oss3 << "+";
-	oss3 << 100*(parameters[5] - 1) << " \%";
+	if (stretchTTbar > 1) oss3 << "+";
+	oss3 << 100*(stretchTTbar - 1) << " \%";
 	std::ostringstream oss4;
-	oss4 << "QCD shift = " << std::fixed << std::setprecision(1) << parameters[2] << " GeV                                                    #bar{t}";
+	oss4 << "QCD shift = " << std::fixed << std::setprecision(1) << shiftQCD << " GeV                                                    #bar{t}";
 	std::ostringstream oss5;
 	oss5 << "QCD stretch = " << std::fixed << std::setprecision(1);
-	if (parameters[4] > 1) oss5 << "+";
-	oss5 << 100*(parameters[4] - 1) << " \%                                                  #bar{t}";
+	if (stretchQCD > 1) oss5 << "+";
+	oss5 << 100*(stretchQCD - 1) << " \%                                                  #bar{t}";
 	
 	std::vector<TString> texts_par;
 	texts_par.push_back("#bf{Fit parameters:}");

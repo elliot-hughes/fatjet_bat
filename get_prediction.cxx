@@ -21,75 +21,19 @@
 
 using namespace std;
 
-TString input_file = "theta_plots_sim_sig_sb.root";
-//TString input_file = "theta_plots_sim_sig_sbb.root";
-vector<TString> regions = {"SR", "SB"};
-vector<TString> processes = {"DATA", "QCD", "TTbar", "Ms100", "Ms150", "Ms200", "Ms250", "Ms300", "Ms400", "Ms500"};
-vector<TString> processes_bkg = {"QCD", "TTbar"};
-vector<string> processes_sig = {"Ms100", "Ms150", "Ms200", "Ms250", "Ms300", "Ms400", "Ms500"};
 
-map<TString,TH1D*> fetch_input_histograms(TString fname) {
-	map<TString,TH1D*> histograms;
-	
-	/// Read file:
-	TFile* tfile = TFile::Open(fname, "READ");
-	if (!tfile || !tfile->IsOpen()) {
-		BCLog::OutError(Form("Could not open file %s.", fname.Data()));
-		return histograms;
-	}
-	/// Fetch histograms:
-	for (unsigned i = 0; i < regions.size(); ++i) {
-		TString region = regions[i];
-		for (unsigned j = 0; j < processes.size(); ++j) {
-			TString process = processes[j];
-			TString name = "mavg" + region + "__" + process;
-			TString key = process + "_" + region;
-			TH1D* h = (TH1D*) tfile->Get(name);
-			if (!h) {
-				BCLog::OutError(Form("Could not find histogram named %s.", name.Data()));
-			}
-			else {
-				histograms[name] = h;
-			}
-		}
-	}
-	return histograms;
-}
-
-
-int main()
-{
-	// set nicer style for drawing than the ROOT default
+int main() {
 	BCAux::SetStyle();
 	
 	// open log file
-//	BCLog::OpenLog("log.txt", BCLog::detail, BCLog::detail);
-	BCLog::OpenLog("log.txt", BCLog::detail, BCLog::summary);
+	BCLog::OpenLog("log.txt", BCLog::detail, BCLog::detail);
+//	BCLog::OpenLog("log.txt", BCLog::detail, BCLog::summary);
 	
 	// create new fatjetModel object
 	fatjetModel m("fatjetModel");
-//	m.fill_hists();
-//	m.fill_cdfs();
 	
 	// set precision
 	m.SetPrecision(BCEngineMCMC::kMedium);
-	
-	// Fetch input histograms:
-//	map<TString,TH1D*> input_histograms = fetch_input_histograms(input_file);
-	/// Print out information about them:
-//	unsigned ninput = input_histograms.size();
-//	if (ninput > 0) {
-//		BCLog::OutSummary(Form("Fetched %u input histograms:", ninput));
-//		for (auto const& i : input_histograms) {
-////			BCLog::OutSummary(Form("  * %s: %s", i.first.Data(), i.second->GetName()));
-//			BCLog::OutSummary(Form("  * %s", i.first.Data()));
-//		}
-//		BCLog::OutSummary("");
-//	}
-//	else {
-//		BCLog::OutError("No input histograms were found!");
-//		return 0;
-//	}
 	
 	// Define everything:
 	/// Channels:
@@ -119,6 +63,7 @@ int main()
 	
 	
 	/// Processes:
+	vector<string> processes_sig = m.get_process_names("signal");
 	//// Note: this order governs the stack order.
 	//// Add QCD:
 	for (unsigned i = 0; i < channels.size(); ++i) m.AddProcess("normQCD" + channels[i], normQCD_min, normQCD_max);
@@ -166,36 +111,19 @@ int main()
 //	m.GetParameter("shiftTTbar").Fix(4.3);
 //	m.GetParameter("stretchQCD").Fix(0.98);
 //	m.GetParameter("stretchTTbar").Fix(1.02);
-
-
-//	cout << m.GetParameter("shiftTTbar").GetPrior(0.0) << endl;
-//	cout << m.GetParameter("stretchTTbar").GetPrior(0.0) << endl;
+	
+	/// Signal strength to 0:
+	m.let_signal_float();
 	
 	/// Data:
-//	for (unsigned i = 0; i < channels.size(); ++i) m.SetData(channels[i], *input_histograms["mavg" + channels[i] + "__DATA"]);
-	
-	// Normalize the posterior by integrating it over the full par. space
-//	m.Normalize();
-
-//	m.SetOptimizationMethod(BCIntegrate::kOptMetropolis);
-//	m.SetOptimizationMethod(BCIntegrate::kOptMinuit);
-////	TMinuit* min = m.GetMinuit();
-////	min->Command("SET STR 2");		// Doesn't change anything because the TMinuit instance is remade every time FindMode is called (see FindModeMinuit).
-//	m.FindMode();
-//	return 1;
-//	m.FindMode(vector<double> {0.845, 1.15, -19.8, 4.3, 0.98, 1.03});
-//	m.FindMode(vector<double> {1.0, 1.0, 0.0, 0.0, 1.0, 1.0});
-//	m.FindMode(vector<double> {0.8, 1.0, -20, 5, 1.0, 1.0});
-//	m.FindMode(vector<double> {0.845474, 1.14825, -19.7312, 4.2893, 0.98243, 1.02859});
-//	m.FindMode(vector<double> {0.845474, 1.14825, -19.7312, 4.28935, 0.98243, 1.02859});
-	
+	for (unsigned i = 0; i < channels.size(); ++i) m.SetData(channels[i], *m.get_histogram(channels[i], "DATA"));
 	
 	
 //	m.SetNIterationsPreRunMin(500000);		// Set iterations (default is 100000)
 	m.SetNIterationsPreRunMax(50000);		// Set iterations (default is 100000)
 	m.SetNIterationsRun(50000);		// Set iterations (default is 100000)
 //	m.SetNChains(8);		// Seg. faults.
-	m.SetNChains(1);
+//	m.SetNChains(4);
 //	m.SetPrecision(BCEngineMCMC::kHigh);
 	m.SetMarginalizationMethod(BCIntegrate::kMargMetropolis);
 //	m.SetMarginalizationMethod(BCIntegrate::kMargGrid);
@@ -213,8 +141,7 @@ int main()
 //	for (unsigned i = 0; i < m.GetNChains(); ++i) initial_mcmc.push_back(m.GetBestFitParameters());
 //	m.SetInitialPositions(initial_mcmc);
 	
-//	return 1;
-//	m.MarginalizeAll();
+	m.MarginalizeAll();
 //	m.get_histogram("SR", "DATA");
 //	cout << m.GetMarginalized("normMs300").GetQuantile(0.95) << endl;
 	
@@ -225,45 +152,6 @@ int main()
 	
 //	for (int i = 0; i < 5; ++i) cout << m.make_toy("SR")->GetMean() << endl;
 	
-	int n_obs = 10;
-	vector<vector<double>> observed_limits;
-	observed_limits.push_back(m.get_observed_limit("Ms100", n_obs));
-	observed_limits.push_back(m.get_observed_limit("Ms150", n_obs));
-	observed_limits.push_back(m.get_observed_limit("Ms200", n_obs));
-	observed_limits.push_back(m.get_observed_limit("Ms250", n_obs));
-	observed_limits.push_back(m.get_observed_limit("Ms300", n_obs));
-	observed_limits.push_back(m.get_observed_limit("Ms400", n_obs));
-	observed_limits.push_back(m.get_observed_limit("Ms500", n_obs));
-	
-	int n_exp = 200;
-	vector<vector<double>> expected_limits;
-	expected_limits.push_back(m.get_expected_limit("Ms100", n_exp));
-	expected_limits.push_back(m.get_expected_limit("Ms150", n_exp));
-	expected_limits.push_back(m.get_expected_limit("Ms200", n_exp));
-	expected_limits.push_back(m.get_expected_limit("Ms250", n_exp));
-	expected_limits.push_back(m.get_expected_limit("Ms300", n_exp));
-	expected_limits.push_back(m.get_expected_limit("Ms400", n_exp));
-	expected_limits.push_back(m.get_expected_limit("Ms500", n_exp));
-	
-	m.make_limit_plot(expected_limits, observed_limits);
-
-//	// Test limit plot making:
-//	expected_limits.push_back(vector<double> {0.32732, 0.15566, 0.65001, 0.091073, 1.2966});
-//	expected_limits.push_back(vector<double> {0.087664, 0.046815, 0.17292, 0.025066, 0.2971});
-//	expected_limits.push_back(vector<double> {0.20849, 0.1176, 0.38782, 0.064528, 0.83698});
-//	expected_limits.push_back(vector<double> {0.28103, 0.13611, 0.63816, 0.079445, 1.6774});
-//	expected_limits.push_back(vector<double> {0.32728, 0.15778, 0.6979, 0.07632, 1.7891});
-//	expected_limits.push_back(vector<double> {0.48641, 0.21319, 1.038, 0.12659, 2.1661});
-//	expected_limits.push_back(vector<double> {0.81947, 0.35329, 1.7816, 0.16979, 3.8769});
-//	m.make_limit_plot(expected_limits, expected_limits);
-	
-//	for (unsigned i = 0; i < observed_limits.size(); ++i) {
-//		for (unsigned j = 0; j < observed_limits[i].size(); ++j) cout << observed_limits[i][j] << endl;
-//		cout << endl;
-//	}
-	
-	
-//	return 1;
 
 //	// run mode finding; by default using Minuit
 ////	m.FindMode(m.GetBestFitParameters());
@@ -271,12 +159,12 @@ int main()
 //	// draw all marginalized distributions into a PDF file
 	m.PrintAllMarginalized(m.GetSafeName() + "_plots.pdf");		// Commenting this out gives the weird error at the end.
 
-//	// BROKEN FOR NOW:
-////	for (int i = 0; i < m.GetNChannels(); ++i) {
-////		BCMTFChannel* channel = m.GetChannel(i);
-////		channel->PrintTemplates(channel->GetSafeName() + "_templates.pdf");
-////		m.PrintStack(i, m.GetBestFitParameters(), channel->GetSafeName() + "_stack.pdf");
-////	}
+	// BROKEN FOR NOW:
+	for (int i = 0; i < m.GetNChannels(); ++i) {
+		BCMTFChannel* channel = m.GetChannel(i);
+		channel->PrintTemplates(channel->GetSafeName() + "_templates.pdf");
+		m.PrintStack(i, m.GetBestFitParameters(), channel->GetSafeName() + "_stack.pdf");
+	}
 //	
 //	
 ////	unsigned tote = m.GetBestFitParameterErrors().size();
@@ -292,7 +180,7 @@ int main()
 //	// m.PrintKnowledgeUpdatePlots(m.GetSafeName() + "_update.pdf");
 
 //	// print results of the analysis into a text file
-//	m.PrintSummary();
+	m.PrintSummary();
 
 //	// close log file
 //	BCLog::OutSummary("Exiting");

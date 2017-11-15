@@ -22,7 +22,7 @@ CXXSRCS = fatjetModel.cxx
 # List of all program sources used in the program
 # Add classes to the end. Backslash indicates continuation
 # on the next line
-PRGSRCS = runfatjetModel.cxx
+PRGSRCS = runfatjetModel.cxx get_prediction.cxx #make_limits.cxx
 
 # compiler and flags
 CXX       = g++
