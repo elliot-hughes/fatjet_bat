@@ -54,12 +54,24 @@ public:
 	// Overload LogLikelihood to implement model
 	double LogLikelihood(const std::vector<double>& parameters);
 	
+	// Limit setting:
+	TH1D* make_toy(std::string channel);
+	std::vector<double> get_limit(bool observed, std::string signal_process, int n);
+	std::vector<double> get_observed_limit(std::string signal_process, int n);
+	std::vector<double> get_expected_limit(std::string signal_process, int n);
+	
 	void PrintStack(int channelindex, const std::vector<double>& parameters, const std::string& filename = "stack.pdf", const std::string& options = "e1b0stack");
 
 
 private:
 	std::map<std::string, TH1D*> hists;
 	std::map<std::string, TH1D*> cdfs;
+	std::string input_file = "theta_plots_sim_sig_sb.root";
+	std::vector<std::string> processes = {"DATA", "QCD", "TTbar", "Ms100", "Ms150", "Ms200", "Ms250", "Ms300", "Ms400", "Ms500"};
+	std::vector<std::string> mss = {"100", "150", "200", "250", "300", "400", "500"};
+	std::vector<std::string> processes_sig = {"Ms100", "Ms150", "Ms200", "Ms250", "Ms300", "Ms400", "Ms500"};
+//	std::vector<std::string> channels = {"SR", "SB"};
+	std::vector<std::string> channels = {"SR"};
 };
 // ---------------------------------------------------------
 

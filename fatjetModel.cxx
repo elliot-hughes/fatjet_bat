@@ -17,8 +17,11 @@
 #include <TH1D.h>
 #include <THStack.h>
 #include <TString.h>
+#include <TLatex.h>
 #include <TCanvas.h>
+#include <TRandom3.h>
 #include <iostream>
+#include <sstream>
 
 // ---------------------------------------------------------
 fatjetModel::fatjetModel(const std::string& name) :
@@ -28,6 +31,9 @@ fatjetModel::fatjetModel(const std::string& name) :
     // AddParameter("mu",-2,1,"#mu");
     // And set priors, if using built-in priors. For example:
     // GetParamater("mu").SetPrior(new BCPriorGaus(-1, 0.25));
+    this->fill_hists();
+    this->fill_cdfs();
+    
 }
 
 // ---------------------------------------------------------
@@ -90,26 +96,60 @@ double fatjetModel::evaluate_cdf(const TH1D* cdf, const double x) {
 
 // ---------------------------------------------------------
 void fatjetModel::fill_hists() {
-	// Loop over channels: ("SR", "SB")
-	for (int ichannel = 0; ichannel < BCMTF::GetNChannels(); ++ichannel) {
-		BCMTFChannel* channel = BCMTF::GetChannel(ichannel);
-		std::string channel_name = channel->GetName();		// "SR" or "SB"
-		
-		// Assign DATA histogram:
-		BCMTFTemplate* temp_data = channel->GetData();
-		hists[channel_name + "_DATA"] = temp_data->GetHistogram();
-		
-		// Assign TTbar and QCD histograms:
-		for (int itemp = 0; itemp < BCMTF::GetNProcesses(); ++itemp) {
-			BCMTFTemplate* temp = channel->GetTemplate(itemp);
-			std::string process_name = "None";
-			if (temp->GetProcessName() == "normTTbar") process_name = "TTbar";
-			else if (temp->GetProcessName() == "normQCDSR" || temp->GetProcessName() == "normQCDSB") process_name = "QCD";
-			TH1D* h = temp->GetHistogram();
-			if (h) hists[channel_name + "_" + process_name] = h;
-			else std::cout << "This histogram is empty: " << channel_name << "  " << temp->GetProcessName() << std::endl;
+	// Read file:
+	TFile* tfile = TFile::Open(TString(input_file), "READ");
+	if (!tfile || !tfile->IsOpen()) {
+		BCLog::OutError(Form("Could not open file %s.", input_file.c_str()));
+		return;
+	}
+	// Fetch histograms:
+	for (unsigned i = 0; i < channels.size(); ++i) {
+		std::string channel = channels[i];
+		for (unsigned j = 0; j < processes.size(); ++j) {
+			std::string process = processes[j];
+			TString name = "mavg" + channel + "__" + process;
+			std::string key = channel + "_" + process;
+			TH1D* h = (TH1D*) tfile->Get(name);
+			if (!h) {
+				BCLog::OutError(Form("Could not find histogram named %s.", name.Data()));
+			}
+			else {
+				hists[key] = h;
+			}
 		}
 	}
+//	return;
+//	// Loop over channels: ("SR", "SB")
+//	for (int ichannel = 0; ichannel < BCMTF::GetNChannels(); ++ichannel) {
+//		BCMTFChannel* channel = BCMTF::GetChannel(ichannel);
+//		std::string channel_name = channel->GetName();		// "SR" or "SB"
+//		
+//		// Assign DATA histogram:
+//		BCMTFTemplate* temp_data = channel->GetData();
+//		hists[channel_name + "_DATA"] = temp_data->GetHistogram();
+//		
+//		// Assign other process histograms:
+//		for (int itemp = 0; itemp < BCMTF::GetNProcesses(); ++itemp) {
+//			BCMTFTemplate* temp = channel->GetTemplate(itemp);
+//			std::string process_name = "None";
+//			// TTbar:
+//			if (temp->GetProcessName() == "normTTbar") process_name = "TTbar";
+//			// QCD:
+//			else if (temp->GetProcessName() == "normQCDSR" || temp->GetProcessName() == "normQCDSB") process_name = "QCD";
+//			// Signal:
+//			else {
+//				for (unsigned isig = 0; isig < processes_sig.size(); ++isig) {
+//					if (temp->GetProcessName() == "norm" + processes_sig[isig]) {
+//						process_name = processes_sig[isig];
+//						break;
+//					}
+//				}
+//			}
+//			TH1D* h = temp->GetHistogram();
+//			if (h) hists[channel_name + "_" + process_name] = h;
+//			else std::cout << "This histogram is empty: " << channel_name << "  " << temp->GetProcessName() << std::endl;
+//		}
+//	}
 	
 	// Print stuff:
 	unsigned n = hists.size();
@@ -137,11 +177,16 @@ TH1D* fatjetModel::get_histogram(std::string channel_name, std::string process_n
 void fatjetModel::fill_cdfs() {
 	std::cout << "Filling cdfs" << std::endl;
 	TFile* tfile_sb = TFile::Open("analysis_plots_sb_f1.root");
+//	TFile* tfile_sb = TFile::Open("analysis_plots_sbb_f1.root");
 	TFile* tfile_sr = TFile::Open("analysis_plots_sig_f1.root");
 	cdfs["SR_QCD"] = (TH1D*) tfile_sr->Get("cdf_jetht");
 	cdfs["SB_QCD"] = (TH1D*) tfile_sb->Get("cdf_jetht");
 	cdfs["SR_TTbar"] = (TH1D*) tfile_sr->Get("cdf_ttbar");
 	cdfs["SB_TTbar"] = (TH1D*) tfile_sb->Get("cdf_ttbar");
+	for (unsigned i = 0; i < mss.size(); ++i) {
+		cdfs["SB_Ms" + mss[i]] = (TH1D*) tfile_sb->Get(TString("cdf_sq") + mss[i] + "to4j");
+		cdfs["SR_Ms" + mss[i]] = (TH1D*) tfile_sr->Get(TString("cdf_sq") + mss[i] + "to4j");
+	}
 	
 //	std::cout << "Filling cdfs" << std::endl;
 //	for (auto const& i : hists) {
@@ -164,7 +209,7 @@ void fatjetModel::differentiate_cdf(const TH1D* cdf, TH1D* out, double amplitude
 //	assert(stretch > 0.0);
 	
 	double peak = median_from_cdf(cdf);
-	std::cout << peak << "  " << amplitude << "  " << shift << "  " << stretch << std::endl;
+//	std::cout << peak << "  " << amplitude << "  " << shift << "  " << stretch << std::endl;		// DEBUG
 	
 	for(int i = 0; i <= out->GetNbinsX() + 1; i++) {
 		double lo = out->GetXaxis()->GetBinLowEdge(i);
@@ -250,11 +295,26 @@ double fatjetModel::LogLikelihood(const std::vector<double>& parameters)
 		double stretchQCD = get_parameter_value(parameters, "stretchQCD");
 		double stretchTTbar = get_parameter_value(parameters, "stretchTTbar");
 		
+//		std::cout << "here 268" << std::endl;
+		
 		// Shift and stretch the templates:
 //		TH1D* h_ttbar = get_histogram(channel_name, "TTbar");
 //		TH1D* h_qcd = get_histogram(channel_name, "QCD");
 		TH1D* h_ttbar_morphed = morph_template(channel_name, "TTbar", normTTbar, shiftTTbar, stretchTTbar);
 		TH1D* h_qcd_morphed = morph_template(channel_name, "QCD", normQCD, shiftQCD, stretchQCD);
+		
+		TH1D* h_sig_morphed;
+		int nsig = 0;
+		for (unsigned isig = 0; isig < processes_sig.size(); ++isig) {
+			double normSig = get_parameter_value(parameters, "norm" + processes_sig[isig]);
+			if (normSig > 0) {
+				if (nsig == 0) h_sig_morphed = morph_template(channel_name, processes_sig[isig], normSig, shiftTTbar, stretchTTbar);
+				else h_sig_morphed->Add(morph_template(channel_name, processes_sig[isig], normSig, shiftTTbar, stretchTTbar));
+				nsig += 1;
+			}
+		}
+		
+//		std::cout << "here 277" << std::endl;
 		
 //		TH1D* cdf_ttbar = make_cdf(h_ttbar, "");
 //		TH1D* cdf_qcd = make_cdf(h_qcd, "");
@@ -272,12 +332,13 @@ double fatjetModel::LogLikelihood(const std::vector<double>& parameters)
 			if (m > 900) break;
 			double obs = h_data->GetBinContent(ibin);
 			double exp = h_qcd_morphed->GetBinContent(ibin) + h_ttbar_morphed->GetBinContent(ibin);
+			if (nsig > 0) exp += h_sig_morphed->GetBinContent(ibin);
 			if (exp <= 0) {
 				nbins_flagged += 1;
 				exp = 0.000001;
 			}
 			double result_component = obs*log(exp) - exp - TMath::LnGamma(obs + 1);
-			std::cout << "obs = " << obs << ", exp = " << exp << ", L = " << result_component << std::endl;
+//			std::cout << "obs = " << obs << ", exp = " << exp << ", L = " << result_component << std::endl;		// DEBUG
 			result += result_component;
 //			std::cout << "obs = " << obs << ", exp = " << exp << ", L = " << BCMath::LogPoisson(obs, exp) << std::endl;		// THIS FUNCTION GIVES CRAZY RESULTS: compare BCMath::LogPoisson(228,899) = -361.832, BCMath::LogPoisson(228,899.001) = -254.732
 //			result += BCMath::LogPoisson(obs, exp);
@@ -287,29 +348,126 @@ double fatjetModel::LogLikelihood(const std::vector<double>& parameters)
 //		else result_component = 0;
 //		result += result_component;
 		
+//		std::cout << "here 311" << std::endl;
+		
 //		delete cdf_ttbar;
 //		delete cdf_qcd;
 		delete h_ttbar_morphed;
+		delete h_sig_morphed;
 		delete h_qcd_morphed;
 		
-//		std::cout << "normQCD = " << normQCD << std::endl;
-//		std::cout << "normTTbar = " << normTTbar << std::endl;
-//		std::cout << "shiftQCD = " << shiftQCD << std::endl;
-//		std::cout << "shiftTTbar = " << shiftTTbar << std::endl;
-//		std::cout << "stretchQCD = " << stretchQCD << std::endl;
-//		std::cout << "stretchTTbar = " << stretchTTbar << std::endl;
-//		std::cout << "nbins_flagged = " << nbins_flagged << std::endl;
-		std::cout << "L = " << result << std::endl;
+////		std::cout << "normQCD = " << normQCD << std::endl;
+////		std::cout << "normTTbar = " << normTTbar << std::endl;
+////		std::cout << "shiftQCD = " << shiftQCD << std::endl;
+////		std::cout << "shiftTTbar = " << shiftTTbar << std::endl;
+////		std::cout << "stretchQCD = " << stretchQCD << std::endl;
+////		std::cout << "stretchTTbar = " << stretchTTbar << std::endl;
+////		std::cout << "nbins_flagged = " << nbins_flagged << std::endl;
+//		std::cout << "L = " << result << std::endl;		// DEBUG
 	}
 //	std::cout << parameters.size() << std::endl;
 //	std::cout << hists.size() << std::endl;
 //	std::cout << cdfs.size() << std::endl;
 	
 //	std::cout << result << std::endl;
+//	std::cout << "lik done" << std::endl;
 
 	
 	return result;
 }
+
+// ---------------------------------------------------------
+TH1D* fatjetModel::make_toy(std::string channel) {
+	TH1D* h_bkg = (TH1D*) get_histogram(channel, "QCD")->Clone(TString(channel) + "_bkg");
+	h_bkg->Add(get_histogram(channel, "TTbar"));
+	TH1D* h_toy = (TH1D*) h_bkg->Clone(TString(channel) + "_toy");
+	h_toy->Reset();
+	gRandom->SetSeed(0);
+	h_toy->FillRandom(h_bkg, h_bkg->Integral());
+	TCanvas* tc = new TCanvas();
+	h_toy->Draw("e0");
+	tc->SaveAs("toy.pdf");
+	return h_toy;
+}
+
+// ---------------------------------------------------------
+std::vector<double> fatjetModel::get_limit(bool observed, std::string signal_process, int n) {
+	std::vector<double> results;
+	std::vector<double> output;
+	
+	// Set signal strength of particular signal to 1:
+	for (unsigned isig = 0; isig < processes_sig.size(); ++isig) {
+		if (signal_process != processes_sig[isig]) this->GetParameter("norm" + processes_sig[isig]).Fix(0.0);
+		else this->GetParameter("norm" + processes_sig[isig]).Unfix();
+	}
+	
+	// Do n iterations:
+	for (int i = 0; i < n; ++i) {
+		// Set data or toy:
+		if (observed) {
+			for (unsigned i = 0; i < channels.size(); ++i) {
+				this->SetData(channels[i], *(this->get_histogram(channels[i], "DATA")));
+			}
+		}
+		else {
+			for (unsigned i = 0; i < channels.size(); ++i) {
+				this->SetData(channels[i], *(make_toy(channels[i])));
+			}
+		}
+	
+		// Get limit:
+		this->SetRandomSeed(0);		// This changes the random seed, otherwise every marginalization would give the same result.
+		this->MarginalizeAll();
+		results.push_back(this->GetMarginalized("norm" + signal_process).GetQuantile(0.95));
+	}
+	
+	// Calculate the output:
+	/// Sort the results:
+	std::sort(results.begin(), results.end());
+	/// Calculate the central values and bands:
+	//// This procedure is intended to replicate Theta (which replicates combined?).
+	double median = results[n/2];
+	if (observed) {
+		double width = results[int(0.75*n)] - results[int(0.25*n)];
+		std::vector<double> results_trimmed;
+		for (unsigned i = 0; i < results.size(); ++i){
+			if (results[i] >= median - width && results[i] <= median + width) results_trimmed.push_back(results[i]);
+		}
+		double mean = 0;
+		for (unsigned i = 0; i < results_trimmed.size(); ++i) mean += results_trimmed[i];
+		mean /= results_trimmed.size();
+		double sigma = 0;
+		if (results_trimmed.size() > 1) {
+			for (unsigned i = 0; i < results_trimmed.size(); ++i) sigma += pow(results_trimmed[i] - mean, 2);
+			sigma /= results_trimmed.size() - 1;
+			sigma = sqrt(sigma);
+		}
+		output.push_back(mean);
+		output.push_back(mean - sigma);
+		output.push_back(mean + sigma);
+		output.push_back(mean - 2*sigma);
+		output.push_back(mean + 2*sigma);
+	}
+	else {
+		output.push_back(median);
+		output.push_back(results[int(0.16*n)]);		// -1 sigma
+		output.push_back(results[int(0.84*n)]);		// +1 sigma
+		output.push_back(results[int(0.025*n)]);		// -2 sigma
+		output.push_back(results[int(0.975*n)]);		// +2 sigma
+	}
+	return output;
+}
+
+// ---------------------------------------------------------
+std::vector<double> fatjetModel::get_observed_limit(std::string signal_process, int n) {
+	return get_limit(true, signal_process, n);
+}
+
+// ---------------------------------------------------------
+std::vector<double> fatjetModel::get_expected_limit(std::string signal_process, int n) {
+	return get_limit(false, signal_process, n);
+}
+
 
 
 // ---------------------------------------------------------
@@ -457,48 +615,31 @@ void fatjetModel::PrintStack(int channelindex, const std::vector<double>& parame
 //        hist = new TH1D( *(temphist) );
 
         // set histogram style
-        int color = BCMTF::GetProcess(i)->GetHistogramColor();
-        if (color < 0)
-            color = 2 + i;
-        int fillstyle = BCMTF::GetProcess(i)->GetHistogramFillStyle();
-        if (fillstyle < 0)
-            fillstyle = 1001;
-        int linestyle = BCMTF::GetProcess(i)->GetHistogramLineStyle();
-        if (linestyle < 0)
-            linestyle = 1;
-
-        // set color and fill style
-        hist->SetFillColor(color);
-        hist->SetFillStyle(fillstyle);
-        hist->SetLineStyle(linestyle);
+		if (process_name == "TTbar") {
+			hist->SetFillColor(kRed - 4);
+			hist->SetFillStyle(3003);
+			hist->SetMarkerSize(0);
+			
+//			h_fit_ttbar->SetLineWidth(2);
+//			h_fjp_jetht->Rebin(nrebin);
+//			h_fjp_jetht->SetLineWidth(2);
+//			h_fjp_jetht->SetMarkerSize(1.2);
+//			h_fjp_jetht->GetXaxis()->SetRangeUser(0, xmax);
+//			h_fjp_jetht->GetXaxis()->SetNdivisions(406);
+//			h_fjp_jetht->GetXaxis()->SetTitle(get_xtitle("mavg"));
+		}
+		else if (process_name == "QCD") {
+			hist->SetFillColorAlpha(kBlue-10, 0.5);
+			hist->SetFillStyle(1001);
+			hist->SetMarkerSize(0);
+			hist->SetLineStyle(2);
+		}
 
         if (flag_bw) {
             hist->SetFillColor(0);
         }
 		
 		
-//        // scale histogram
-//        for (int ibin = 1; ibin <= nbins; ++ibin) {
-
-//            // get efficiency
-//            double efficiency = Efficiency(channelindex, i, ibin, parameters);
-
-//            // get probability
-//            double probability = Probability(channelindex, i, ibin, parameters);
-
-//            // get parameter index
-//            int parindex = GetParIndexProcess(i);
-
-//            // add to expectation
-//            double expectation = parameters[parindex] * efficiency * probability;
-
-//            // set bin content
-//            hist->SetBinContent(ibin, expectation);
-
-//            // add bin content
-//            hist_sum->SetBinContent(ibin, hist_sum->GetBinContent(ibin) + expectation);
-//        }
-
         // add histogram to container (for memory management)
         histcontainer.push_back(hist);
 
@@ -507,7 +648,10 @@ void fatjetModel::PrintStack(int channelindex, const std::vector<double>& parame
     }
 
     //draw data
-    hist_data->Draw("P0");
+	hist_data->GetXaxis()->SetRangeUser(0, 900);
+	hist_data->GetXaxis()->SetNdivisions(405);
+	hist_data->GetXaxis()->SetTitle("#bar{#it{m}}  [GeV]");
+	hist_data->Draw("P0");
 
     // define variable for maximum in y-direction
     double ymax = 0;;
@@ -561,7 +705,43 @@ void fatjetModel::PrintStack(int channelindex, const std::vector<double>& parame
 
     // redraw the axes
     gPad->RedrawAxis();
-
+    
+    // Write parameters:
+	std::ostringstream oss1;
+	oss1 << "t#bar{t} norm = " << std::fixed << std::setprecision(2) << parameters[1];
+	std::ostringstream oss2;
+	oss2 << "t#bar{t} shift = " << std::fixed << std::setprecision(1) << parameters[3] << " GeV";
+	std::ostringstream oss3;
+	oss3 << "t#bar{t} stretch = " << std::fixed << std::setprecision(1);
+	if (parameters[5] > 1) oss3 << "+";
+	oss3 << 100*(parameters[5] - 1) << " \%";
+	std::ostringstream oss4;
+	oss4 << "QCD shift = " << std::fixed << std::setprecision(1) << parameters[2] << " GeV                                                    #bar{t}";
+	std::ostringstream oss5;
+	oss5 << "QCD stretch = " << std::fixed << std::setprecision(1);
+	if (parameters[4] > 1) oss5 << "+";
+	oss5 << 100*(parameters[4] - 1) << " \%                                                  #bar{t}";
+	
+	std::vector<TString> texts_par;
+	texts_par.push_back("#bf{Fit parameters:}");
+	texts_par.push_back(oss1.str());
+	texts_par.push_back(oss2.str());
+	texts_par.push_back(oss3.str());
+	texts_par.push_back(oss4.str());
+	texts_par.push_back(oss5.str());
+	
+	TString text = texts_par[texts_par.size() - 1];
+	for (unsigned i = texts_par.size() - 1; i-- > 0;) {
+		text = "#splitline{" + texts_par[i] + "}{" + text + "}";
+	}
+	TLatex* ttext = new TLatex(0, 0, text);
+	ttext->SetNDC();		// Set text position to NDC coordinates.
+	ttext->SetX(0.57);
+	ttext->SetY(0.55);
+	ttext->SetTextFont(42);
+	ttext->SetTextSize(0.032);
+	ttext->Draw();
+	
     // print
     c1->Print(filename.data());
 
